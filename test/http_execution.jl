@@ -17,8 +17,8 @@ end
 
     # handle_error
     @test_throws ArgumentError test_error_handler(GraphQLClient.handle_error, ArgumentError("msg"))
-    @test_throws HTTP.StatusError test_error_handler(GraphQLClient.handle_error, HTTP.StatusError(404, "POST", "", HTTP.Response(404;request=HTTP.Request(), body="{}")))
-    @test_throws GraphQLClient.GraphQLError test_error_handler(GraphQLClient.handle_error, HTTP.StatusError(400, "POST", "", HTTP.Response(400;request=HTTP.Request(), body="{}")))
+    @test_throws HTTP.StatusError test_error_handler(GraphQLClient.handle_error, HTTP.StatusError(404, HTTP.Response(404;request=HTTP.Request(), body=Vector{UInt8}("{}"))))
+    @test_throws GraphQLClient.GraphQLError test_error_handler(GraphQLClient.handle_error, HTTP.StatusError(400, HTTP.Response(400;request=HTTP.Request(), body=Vector{UInt8}("{}"))))
 
     # handle_deserialisation_error
     @test_throws MethodError test_error_handler(GraphQLClient.handle_deserialisation_error, MethodError(""), "", "")
@@ -27,7 +27,7 @@ end
     # Argument error with "invalid JSON" but default type
     @test_throws ArgumentError test_error_handler(GraphQLClient.handle_deserialisation_error, ArgumentError(""), "", Any)
     # Actual deserialisation error
-    resp = HTTP.Response(200;body="{\"data\": {\"query\": 1}}")
+    resp = HTTP.Response(200;body=Vector{UInt8}("{\"data\": {\"query\": 1}}"))
     @test_throws ArgumentError test_error_handler(
         GraphQLClient.handle_deserialisation_error,
         ArgumentError("invalid JSON at byte"),
@@ -44,7 +44,7 @@ end
     end
 
     # Actual error that resulted in a deserialisation error
-    resp = HTTP.Response(400;body="{\"errors\": [{\"message\": \"I stopped deserialisation!\"}]}")
+    resp = HTTP.Response(400;body=Vector{UInt8}("{\"errors\": [{\"message\": \"I stopped deserialisation!\"}]}"))
     @test_throws GraphQLClient.GraphQLError test_error_handler(
         GraphQLClient.handle_deserialisation_error,
         ArgumentError("invalid JSON at byte"),
@@ -58,7 +58,7 @@ end
 end
 
 function local_server_success(port)
-    @async HTTP.serve(HTTP.Sockets.localhost, port) do req
+    HTTP.serve!("127.0.0.1", port) do req
         execution_string = String(req.body)
         return HTTP.Response("""
             {
@@ -73,12 +73,12 @@ function local_server_success(port)
 end
 
 function local_server_success_json(port)
-    @async HTTP.serve(HTTP.Sockets.localhost, port) do req
+    HTTP.serve!("127.0.0.1", port) do req
         return HTTP.Response(JSON3.write(
             Dict(
                 "data" => Dict(
                     "queryName" => Dict(
-                        "field" => JSON3.read(req.body)
+                        "field" => JSON3.read(String(req.body))
                     )
                 )
             )
@@ -87,7 +87,7 @@ function local_server_success_json(port)
 end
 
 function local_server_error(port)
-    @async HTTP.serve(HTTP.Sockets.localhost, port) do req
+    HTTP.serve!("127.0.0.1", port) do req
         str = """
             {
                 "data": {
@@ -110,7 +110,7 @@ end
     # Successful query
     port = 7999
     local_server_success(7999)
-    client = Client("http://$(HTTP.Sockets.localhost):$port";introspect=false)
+    client = Client("http://127.0.0.1:$port";introspect=false)
 
     execution_string = "execute this"
     response = GraphQLClient._execute(client.endpoint, execution_string, Dict())
@@ -131,7 +131,7 @@ end
     # Test error in response
     port = 7996
     local_server_error(7996)
-    client = Client("http://$(HTTP.Sockets.localhost):$port";introspect=false)
+    client = Client("http://127.0.0.1:$port";introspect=false)
     execution_string = "execute this"
     response = GraphQLClient._execute(client.endpoint, execution_string, Dict())
     @test !isnothing(response.errors)
@@ -150,7 +150,7 @@ end
     struct S2; field::S1; end
     StructTypes.StructType(::Type{S1}) = StructTypes.Struct()
     StructTypes.StructType(::Type{S2}) = StructTypes.Struct()
-    client = Client("http://$(HTTP.Sockets.localhost):$port";introspect=false)
+    client = Client("http://127.0.0.1:$port";introspect=false)
     @inferred GraphQLClient.execute(client.endpoint, Dict("query" => "val"))
     @inferred GraphQLClient.execute(client.endpoint, Dict("query" => "val"), Dict(), S2)
     response = GraphQLClient.execute(client.endpoint, Dict("query" => "val"))

@@ -41,7 +41,9 @@ This function is designed to be used with the `do` keyword.
 - `output_fields=String[]`: output fields to be returned. Can be a string, or
     composed of dictionaries and vectors.
 - `initfn=nothing`: optional function to be run once subscription is itialised.
-- `retry=true`: retry if subscription fails to open.
+- `retry=true`: deprecated and ignored. HTTP.jl 2 no longer accepts a `retry`
+    keyword on `WebSockets.open`; the argument is retained only for backwards
+    compatibility and has no effect.
 - `subtimeout=0`: if `stopfn` supplied, this is the period that it is called at.
     If `stopfn` is not supplied, this is the timeout for waiting for data. The timer
     is reset after every subscription result is received.
@@ -94,10 +96,10 @@ function open_subscription(fn::Function,
     )
     message_str = JSON3.write(message)
     throw_if_assigned = Ref{GraphQLError}()
-    HTTP.WebSockets.open(client.ws_endpoint; retry=retry, headers=client.headers) do ws
+    HTTP.WebSockets.open(client.ws_endpoint; headers=client.headers) do ws
         # Start sub
         output_info(verbose) && println("Starting $(get_name(subscription_name)) subscription with ID $sub_id")
-        HTTP.send(ws, message_str)
+        HTTP.WebSockets.send(ws, message_str)
         subscription_tracker[][sub_id] = "open"
 
         # Init function
@@ -167,7 +169,7 @@ function async_reader_with_timeout(ws::HTTP.WebSockets.WebSocket, subtimeout)::C
             Base.throwto(reader_task, InterruptException())
         end
         timeout = Timer(timeout_cb, subtimeout)
-        data = HTTP.receive(ws)
+        data = HTTP.WebSockets.receive(ws)
         subtimeout > 0 && close(timeout) # Cancel the timeout
         put!(ch, data)
     end
@@ -221,7 +223,7 @@ function readfromwebsocket(ws::HTTP.WebSockets.WebSocket, stopfn, subtimeout)
         ch_out = async_reader_with_stopfn(ws, stopfn, checktime)
         data = take!(ch_out)
     else
-        data = HTTP.receive(ws)
+        data = HTTP.WebSockets.receive(ws)
     end
     return data
 end
