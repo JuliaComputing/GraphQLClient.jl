@@ -366,7 +366,7 @@ As well as the `subscription_name`, `output_type`, `sub_args`, `output_fields` a
 
 A function can be passed to the `initfn` to be run once the subscription is open. This means that if subscribing to the result of a mutation, for example, it can be guaranteed that no responses will be missed between the mutation being executed and the subscription being opened.
 
-If the `retry` keyword argument is `true`, GraphQLClient will retry the opening of the subscription if it fails. This keyword argument is passed directly to `HTTP.WebSockets.open`.
+The `retry` keyword argument is deprecated and has no effect. HTTP.jl 2 no longer accepts a `retry` keyword on `HTTP.WebSockets.open`, so it is retained only for backwards compatibility.
 
 ### Stopping
 

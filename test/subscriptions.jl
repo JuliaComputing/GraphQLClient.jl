@@ -1,9 +1,9 @@
 function listen_localhost()
-    @async HTTP.listen(HTTP.Sockets.localhost, 8080) do http
+    HTTP.listen!("127.0.0.1", 8080) do http
         if HTTP.WebSockets.isupgrade(http.message)
             HTTP.WebSockets.upgrade(http) do ws
                 for data in ws
-                    HTTP.send(ws, data)
+                    HTTP.WebSockets.send(ws, data)
                 end
             end
         end
@@ -11,7 +11,7 @@ function listen_localhost()
 end
 
 function do_nothing_localhost()
-    @async HTTP.listen(HTTP.Sockets.localhost, 8081) do http
+    HTTP.listen!("127.0.0.1", 8081) do http
         if HTTP.WebSockets.isupgrade(http.message)
             HTTP.WebSockets.upgrade(http) do ws
                 for data in ws
@@ -30,7 +30,7 @@ end
         @test take!(ch) == :timeout
 
         ch = GraphQLClient.async_reader_with_timeout(ws, 5)
-        HTTP.send(ws, "Data")
+        HTTP.WebSockets.send(ws, "Data")
         @test String(take!(ch)) == "Data"
 
         # stopfn
@@ -43,11 +43,11 @@ end
         @test take!(ch) == :stopfn
         stop[] = false
         ch = GraphQLClient.async_reader_with_stopfn(ws, stopfn, 0.5)
-        HTTP.send(ws, "Data")
+        HTTP.WebSockets.send(ws, "Data")
         @test String(take!(ch)) == "Data"
 
         # readfromwebsocket - no timeout or stopfn
-        HTTP.send(ws, "Data")
+        HTTP.WebSockets.send(ws, "Data")
         @test String(GraphQLClient.readfromwebsocket(ws, nothing, 0)) == "Data"
 
         # readfromwebsocket - timeout
@@ -68,7 +68,7 @@ end
 end
 
 function send_error_localhost(message, port)
-    @async HTTP.listen(HTTP.Sockets.localhost, port) do http
+    HTTP.listen!("127.0.0.1", port) do http
         if HTTP.WebSockets.isupgrade(http.message)
             HTTP.WebSockets.upgrade(http) do ws
                 for data in ws
@@ -90,7 +90,7 @@ function send_error_localhost(message, port)
                         }
                     }
                     """
-                    HTTP.send(ws, error_payload)
+                    HTTP.WebSockets.send(ws, error_payload)
                 end
             end
         end
@@ -98,7 +98,7 @@ function send_error_localhost(message, port)
 end
 
 function send_data_localhost(sub_name, port)
-    @async HTTP.listen(HTTP.Sockets.localhost, port) do http
+    HTTP.listen!("127.0.0.1", port) do http
         if HTTP.WebSockets.isupgrade(http.message)
             HTTP.WebSockets.upgrade(http) do ws
                 for data in ws
@@ -116,7 +116,7 @@ function send_data_localhost(sub_name, port)
                         }
                     }
                     """
-                    HTTP.send(ws, data_payload)
+                    HTTP.WebSockets.send(ws, data_payload)
                 end
             end
         end
