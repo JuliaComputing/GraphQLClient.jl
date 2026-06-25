@@ -41,9 +41,11 @@ This function is designed to be used with the `do` keyword.
 - `output_fields=String[]`: output fields to be returned. Can be a string, or
     composed of dictionaries and vectors.
 - `initfn=nothing`: optional function to be run once subscription is itialised.
-- `retry=true`: deprecated and ignored. HTTP.jl 2 no longer accepts a `retry`
-    keyword on `WebSockets.open`; the argument is retained only for backwards
-    compatibility and has no effect.
+- `retry=true`: retry establishing the subscription's WebSocket connection if the
+    initial open fails (up to a few attempts with backoff). HTTP.jl 2 no longer
+    accepts a `retry` keyword on `WebSockets.open`, so this is reimplemented here.
+    Only connection-establishment failures are retried; errors raised once the
+    subscription is live are not (the handler is never re-run).
 - `subtimeout=0`: if `stopfn` supplied, this is the period that it is called at.
     If `stopfn` is not supplied, this is the timeout for waiting for data. The timer
     is reset after every subscription result is received.
@@ -96,48 +98,65 @@ function open_subscription(fn::Function,
     )
     message_str = JSON3.write(message)
     throw_if_assigned = Ref{GraphQLError}()
-    HTTP.WebSockets.open(client.ws_endpoint; headers=client.headers) do ws
-        # Start sub
-        output_info(verbose) && println("Starting $(get_name(subscription_name)) subscription with ID $sub_id")
-        HTTP.WebSockets.send(ws, message_str)
-        subscription_tracker[][sub_id] = "open"
+    # HTTP.jl 2 dropped the `retry` keyword on `WebSockets.open`, so connection-open
+    # retries are reimplemented here. We retry only failures that happen before the
+    # handler starts (establishing the WebSocket); once `established[]` is set the
+    # subscription is live, so any later error propagates and the handler is never
+    # re-run (which would otherwise re-send `start` / re-run `initfn`).
+    established = Ref(false)
+    max_attempts = retry ? 4 : 1
+    for attempt in 1:max_attempts
+        try
+        HTTP.WebSockets.open(client.ws_endpoint; headers=client.headers) do ws
+            established[] = true
+            # Start sub
+            output_info(verbose) && println("Starting $(get_name(subscription_name)) subscription with ID $sub_id")
+            HTTP.WebSockets.send(ws, message_str)
+            subscription_tracker[][sub_id] = "open"
 
-        # Init function
-        if !isnothing(initfn)
-            output_debug(verbose) && println("Running subscription initialisation function")
-            initfn()
-        end
-
-        # Get listening
-        output_debug(verbose) && println("Listening to $(get_name(subscription_name)) with ID $sub_id...")
-
-        # Run function
-        finish = false
-        while !finish
-            data = readfromwebsocket(ws, stopfn, subtimeout)
-            if data === :timeout
-                output_info(verbose) && println("Subscription $sub_id timed out")
-                break
-            elseif data === :stopfn
-                output_info(verbose) && println("Subscription $sub_id stopped by the stop function supplied")
-                break
+            # Init function
+            if !isnothing(initfn)
+                output_debug(verbose) && println("Running subscription initialisation function")
+                initfn()
             end
-            response = JSON3.read(data, GQLSubscriptionResponse{output_type})
-            payload = response.payload
-            if !isnothing(payload.errors) && !isempty(payload.errors) && throw_on_execution_error
-                subscription_tracker[][sub_id] = "errored"
-                throw_if_assigned[] = GraphQLError("Error during subscription.", payload)
-                break
-            end
-            # Handle multiple subs, do we need this?
-            if response.id == string(sub_id)
-                output_debug(verbose) && println("Result recieved on subscription with ID $sub_id")
-                finish = fn(payload)
-                if !isa(finish, Bool)
+
+            # Get listening
+            output_debug(verbose) && println("Listening to $(get_name(subscription_name)) with ID $sub_id...")
+
+            # Run function
+            finish = false
+            while !finish
+                data = readfromwebsocket(ws, stopfn, subtimeout)
+                if data === :timeout
+                    output_info(verbose) && println("Subscription $sub_id timed out")
+                    break
+                elseif data === :stopfn
+                    output_info(verbose) && println("Subscription $sub_id stopped by the stop function supplied")
+                    break
+                end
+                response = JSON3.read(data, GQLSubscriptionResponse{output_type})
+                payload = response.payload
+                if !isnothing(payload.errors) && !isempty(payload.errors) && throw_on_execution_error
                     subscription_tracker[][sub_id] = "errored"
-                    error("Subscription function must return a boolean")
+                    throw_if_assigned[] = GraphQLError("Error during subscription.", payload)
+                    break
+                end
+                # Handle multiple subs, do we need this?
+                if response.id == string(sub_id)
+                    output_debug(verbose) && println("Result recieved on subscription with ID $sub_id")
+                    finish = fn(payload)
+                    if !isa(finish, Bool)
+                        subscription_tracker[][sub_id] = "errored"
+                        error("Subscription function must return a boolean")
+                    end
                 end
             end
+        end
+        break
+        catch ex
+            (established[] || attempt == max_attempts) && rethrow()
+            output_info(verbose) && println("WebSocket open failed (attempt $attempt/$max_attempts), retrying: ", ex)
+            sleep(0.5 * attempt)
         end
     end
     # We can't throw errors from the ws handle function in HTTP.jl 1.0, as they get digested.
